@@ -1,0 +1,325 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>감정 쓰레기통 v4c (난이도 살짝↑)</title>
+<style>
+  body { background:#f4f4f4; margin:0; font-family: ui-sans-serif, system-ui, "Noto Sans KR", Arial; }
+  .wrap { max-width: 980px; margin: 0 auto; padding: 12px; }
+  h1 { margin: 8px 0 6px; font-size: 20px; }
+  .meta { color:#666; font-size: 13px; margin-bottom: 8px; }
+  canvas { background:#fff; border:2px solid #222; border-radius:12px; display:block; width:100%; height:auto; }
+  .hud { display:flex; gap:10px; margin:8px 0; flex-wrap: wrap; }
+  .bar { flex: 1 1 200px; border:1px solid #ddd; border-radius:10px; padding:8px 10px; background:#fafafa; position:relative; overflow:hidden;}
+  .bar .lbl { display:flex; justify-content:space-between; font-weight:700; font-size:14px; margin-bottom:6px; }
+  .track { height:12px; background:#eee; border-radius:8px; overflow:hidden; border:1px solid #ddd; }
+  .fill { height:100%; width:0%; transition: width .2s cubic-bezier(.2,1,.2,1); }
+  .good { background: linear-gradient(90deg,#b7f3c7,#78e3a2); }
+  .bad  { background: linear-gradient(90deg,#ffc1c1,#ff7b7b); }
+  .pulse { position:absolute; inset:0; pointer-events:none; opacity:0; }
+  .pulse.show { animation:pulse .5s ease; }
+  @keyframes pulse { 0%{opacity:.4; background:rgba(40,199,111,.25)} 100%{opacity:0; background:transparent} }
+  .btns { display:flex; gap:8px; }
+  button { border:1px solid #222; background:#fff; padding:8px 12px; border-radius:10px; font-weight:700; cursor:pointer; }
+  button:hover { background:#f6f6f6; }
+  .toast {
+    position: absolute; left: 50%; top: 14px; transform: translateX(-50%);
+    background: #111; color:#fff; padding: 8px 12px; border-radius: 999px; font-size: 14px;
+    opacity: 0; pointer-events: none;
+  }
+  .show { animation: toast .9s ease; }
+  @keyframes toast { 0%{opacity:0; transform:translate(-50%,-6px)} 15%{opacity:1; transform:translate(-50%,0)} 85%{opacity:1} 100%{opacity:0; transform:translate(-50%,-6px)} }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>🗑️ 감정 쓰레기통 v4c (난이도 살짝↑)</h1>
+  <div class="meta">쪽지를 클릭해 멀리 있는 쓰레기통으로 던지세요. <b>명중 시 덕 +25%</b>, 실패 시 업보 <b>+15%</b>.</div>
+
+  <div class="hud">
+    <div class="bar">
+      <div class="lbl"><span>덕 게이지</span><span id="gLbl">0%</span></div>
+      <div class="track"><div class="fill good" id="gFill"></div></div>
+      <div class="pulse" id="gPulse"></div>
+    </div>
+    <div class="bar">
+      <div class="lbl"><span>업보 게이지</span><span id="bLbl">0%</span></div>
+      <div class="track"><div class="fill bad" id="bFill"></div></div>
+    </div>
+    <div class="btns">
+      <button id="resetBtn">다시하기</button>
+    </div>
+  </div>
+
+  <div style="position:relative">
+    <div class="toast" id="toast">명중!</div>
+    <canvas id="cv" width="960" height="520"></canvas>
+  </div>
+</div>
+
+<script>
+const cv = document.getElementById('cv');
+const ctx = cv.getContext('2d');
+const W = cv.width, H = cv.height;
+
+// Gauges
+let virtue = 0, karma = 0;
+const gFill = document.getElementById('gFill');
+const bFill = document.getElementById('bFill');
+const gLbl  = document.getElementById('gLbl');
+const bLbl  = document.getElementById('bLbl');
+const gPulse= document.getElementById('gPulse');
+const toast = document.getElementById('toast');
+
+function toastMsg(t){
+  toast.textContent = t;
+  toast.classList.remove('show'); void toast.offsetWidth; toast.classList.add('show');
+}
+function pulseGood(){
+  gPulse.classList.remove('show'); void gPulse.offsetWidth; gPulse.classList.add('show');
+}
+function updGauges(){
+  virtue = Math.max(0, Math.min(100, virtue));
+  karma  = Math.max(0, Math.min(100, karma));
+  gFill.style.width = virtue + '%';
+  bFill.style.width = karma + '%';
+  gLbl.textContent = Math.round(virtue) + '%';
+  bLbl.textContent = Math.round(karma) + '%';
+}
+
+// Notes
+const noteTexts = ["분노","질투","후회","집착","원망"];
+let notes = []; // {x,y,w,h,text,used}
+function layoutNotes(){
+  notes = [];
+  const startX = 40, gapY = 12;
+  const boxW = 120, boxH = 46;
+  let y = 60;
+  for (let i=0;i<noteTexts.length;i++){
+    notes.push({x:startX, y:y, w:boxW, h:boxH, text:noteTexts[i], used:false});
+    y += boxH + gapY;
+  }
+}
+
+// Trash (same base as v4b)
+let trash = {
+  x: W-240, y: 120, w: 80, h: 96,
+  dx: 4.0, dy: 2.1, dash:false, dashTimer:0, flash:0, flashColor:'#222'
+};
+const bounds = { xMin: W-380, xMax: W-40, yMin: 60, yMax: H-120 };
+
+// Projectiles
+let projectiles = []; // {x,y,vx,vy,rot,text,active}
+
+let gameOver = false;
+let usedCount = 0;
+let last = 0;
+let dirChangeTimer = 0;
+
+function drawScene(){
+  ctx.clearRect(0,0,W,H);
+
+  // subtle grid
+  ctx.strokeStyle = '#eee';
+  ctx.beginPath();
+  for (let i=0;i<8;i++){ ctx.moveTo(0, 20 + i*60); ctx.lineTo(W, 20 + i*60); }
+  ctx.stroke();
+
+  // notes
+  notes.forEach(n => {
+    ctx.save();
+    ctx.fillStyle = n.used ? '#ddd' : '#fff';
+    ctx.strokeStyle = '#222'; ctx.lineWidth = 2;
+    ctx.fillRect(n.x, n.y, n.w, n.h);
+    ctx.strokeRect(n.x, n.y, n.w, n.h);
+    ctx.fillStyle = '#111'; ctx.font = 'bold 16px sans-serif';
+    ctx.fillText(n.text, n.x + 14, n.y + 28);
+    ctx.restore();
+  });
+
+  // trash
+  ctx.save();
+  ctx.fillStyle = '#f9f9f9';
+  ctx.strokeStyle = trash.flash>0 ? trash.flashColor : '#222';
+  ctx.lineWidth = 3;
+  ctx.fillRect(trash.x, trash.y, trash.w, trash.h);
+  ctx.strokeRect(trash.x, trash.y, trash.w, trash.h);
+  ctx.fillStyle = '#333'; ctx.font = '14px sans-serif';
+  ctx.fillText('쓰레기통', trash.x + 6, trash.y - 6);
+  ctx.restore();
+  if (trash.flash>0) trash.flash-=1;
+
+  // projectiles
+  projectiles.forEach(p => {
+    if (!p.active) return;
+    ctx.save();
+    ctx.fillStyle = '#fff'; ctx.strokeStyle = '#444'; ctx.lineWidth = 2;
+    ctx.translate(p.x, p.y); ctx.rotate(p.rot || 0);
+    ctx.fillRect(-22, -14, 44, 28); ctx.strokeRect(-22, -14, 44, 28);
+    ctx.fillStyle = '#111'; ctx.font = '12px sans-serif';
+    ctx.fillText(p.text, -18, 4);
+    ctx.restore();
+  });
+
+  // hint
+  ctx.fillStyle = '#666'; ctx.font = '12px sans-serif';
+  ctx.fillText('쪽지를 클릭하면 멀리 있는 쓰레기통으로 날아갑니다 (총 5개).', 40, 28);
+}
+
+function moveTrash(dt){
+  // mild erratic with rare dash
+  dirChangeTimer += dt;
+  if (dirChangeTimer > 72){
+    dirChangeTimer = 0;
+    trash.dx += (Math.random()-0.5) * 1.2;
+    trash.dy += (Math.random()-0.5) * 0.9;
+    const max = 5.6;
+    trash.dx = Math.max(-max, Math.min(max, trash.dx));
+    trash.dy = Math.max(-max, Math.min(max, trash.dy));
+    if (Math.random() < 0.10){
+      trash.dash = true;
+      trash.dashTimer = 10;
+    }
+  }
+
+  let mul = trash.dash ? 1.25 : 1;
+  trash.x += trash.dx * mul * (dt/1.0);
+  trash.y += trash.dy * mul * (dt/1.0);
+  if (trash.dash){
+    trash.dashTimer -= 1;
+    if (trash.dashTimer <= 0) trash.dash = false;
+  }
+
+  // bounce within bounds
+  if (trash.x < bounds.xMin){ trash.x = bounds.xMin; trash.dx *= -1; }
+  if (trash.x + trash.w > bounds.xMax){ trash.x = bounds.xMax - trash.w; trash.dx *= -1; }
+  if (trash.y < bounds.yMin){ trash.y = bounds.yMin; trash.dy *= -1; }
+  if (trash.y + trash.h > bounds.yMax){ trash.y = bounds.yMax - trash.h; trash.dy *= -1; }
+}
+
+function stepProjectiles(dt){
+  projectiles.forEach(p => {
+    if (!p.active) return;
+    // softer homing
+    const tcx = trash.x + trash.w/2;
+    const tcy = trash.y + trash.h/2;
+    const toTgtX = tcx - p.x;
+    const toTgtY = tcy - p.y;
+    const len = Math.hypot(toTgtX, toTgtY) || 1;
+    const homingStrength = 0.03; // weaker than v4b
+    p.vx = p.vx * (1-homingStrength) + (toTgtX/len * 9.2) * homingStrength;
+    p.vy = p.vy * (1-homingStrength) + (toTgtY/len * 9.2) * homingStrength;
+
+    p.x += p.vx * dt;
+    p.y += p.vy * dt;
+    p.rot += 0.10;
+
+    // smaller padding
+    const pad = 16;
+    const hitX = p.x >= (trash.x - pad) && p.x <= (trash.x + trash.w + pad);
+    if (hitX){
+      const hitY = p.y >= (trash.y - pad) && p.y <= (trash.y + trash.h + pad);
+      p.active = false;
+      if (hitY){
+        virtue += 25;
+        updGauges();
+        toastMsg("명중! 덕 +25%");
+        pulseGood();
+        trash.flash = 14; trash.flashColor = '#19a974';
+      } else {
+        karma += 15;
+        updGauges();
+        toastMsg("살짝 빗나감! 업보 +15%");
+        trash.flash = 10; trash.flashColor = '#e33';
+      }
+      checkEnd();
+    }
+
+    if (p.x > W + 60 || p.y < -60 || p.y > H + 60){
+      p.active = false;
+      karma += 15; updGauges(); toastMsg("빗나감! 업보 +15%"); trash.flash=10; trash.flashColor='#e33';
+      checkEnd();
+    }
+  });
+}
+
+function loop(ts){
+  if (!last) last = ts;
+  const dt = (ts - last) / 16.67;
+  last = ts;
+  drawScene();
+  moveTrash(dt);
+  stepProjectiles(dt);
+  if (!gameOver) requestAnimationFrame(loop);
+}
+
+function throwFrom(note){
+  const startX = note.x + note.w + 10;
+  const startY = note.y + note.h/2;
+
+  // lead prediction
+  const targetX = trash.x + trash.w/2;
+  const targetY = trash.y + trash.h/2;
+  const dx0 = targetX - startX;
+  const dy0 = targetY - startY;
+  const speed = 9.2;
+  const dist0 = Math.hypot(dx0, dy0);
+  const t = dist0 / speed;
+  const leadX = targetX + trash.dx * t * 1.0;
+  const leadY = targetY + trash.dy * t * 1.0;
+
+  const dx = leadX - startX;
+  const dy = leadY - startY;
+  const dist = Math.hypot(dx, dy) || 1;
+  const vx = (dx / dist) * speed;
+  const vy = (dy / dist) * speed;
+
+  projectiles.push({x:startX, y:startY, vx, vy, rot:0, text:note.text, active:true});
+  note.used = true;
+  usedCount++;
+}
+
+function onClick(e){
+  if (gameOver) return;
+  const rect = cv.getBoundingClientRect();
+  const mx = e.clientX - rect.left;
+  const my = e.clientY - rect.top;
+  for (const n of notes){
+    if (n.used) continue;
+    if (mx >= n.x && mx <= n.x + n.w && my >= n.y && my <= n.y + n.h){
+      throwFrom(n);
+      return;
+    }
+  }
+}
+
+function checkEnd(){
+  if (virtue >= 100){
+    gameOver = true;
+    setTimeout(()=>alert("💨 마음이 한결 가벼워졌습니다"), 10);
+  } else if (usedCount >= notes.length){
+    gameOver = true;
+    if (virtue >= karma){ setTimeout(()=>alert("💨 마음이 한결 가벼워졌습니다"), 10); }
+    else { setTimeout(()=>alert("🗑️ 감정 쓰레기가 쌓였습니다"), 10); }
+  }
+}
+
+function reset(){
+  virtue=0; karma=0; usedCount=0; gameOver=false;
+  projectiles.length = 0;
+  layoutNotes(); updGauges();
+  trash = { x: W-240, y: 120, w: 80, h: 96, dx: 4.0, dy: 2.1, dash:false, dashTimer:0, flash:0, flashColor:'#222' };
+  last = 0; dirChangeTimer = 0;
+  requestAnimationFrame(loop);
+}
+
+document.getElementById('resetBtn').addEventListener('click', reset);
+cv.addEventListener('click', onClick);
+
+// init
+layoutNotes(); updGauges();
+requestAnimationFrame(loop);
+</script>
+</body>
+</html>

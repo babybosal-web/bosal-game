@@ -1,0 +1,117 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>삼독사냥터 - 빠른 버전(조정)</title>
+<style>
+  body { text-align: center; background: #f5f5f5; font-family: sans-serif; overflow: hidden; margin: 0; }
+  h1 { margin: 10px; }
+  canvas { background: #fff; display: block; margin: 0 auto; border: 2px solid #000; }
+</style>
+</head>
+<body>
+<h1>🏹 삼독사냥터 (빠른 버전)</h1>
+<canvas id="gameCanvas" width="800" height="400"></canvas>
+<script>
+const canvas = document.getElementById('gameCanvas');
+const ctx = canvas.getContext('2d');
+
+let targets = [
+  {label: '성냄', x: 100, y: 100, dx: 4.5},
+  {label: '어리석음', x: 300, y: 200, dx: -4.5},
+  {label: '탐욕', x: 500, y: 150, dx: 4.5}
+];
+const targetRadius = 30;
+
+let stickman = {x: canvas.width/2, y: canvas.height - 50};
+
+let virtue = 0;
+let karma = 0;
+let misses = 0;
+let gameOver = false;
+
+function drawStickman() {
+  ctx.beginPath();
+  ctx.arc(stickman.x, stickman.y - 20, 10, 0, Math.PI*2); // head
+  ctx.moveTo(stickman.x, stickman.y - 10);
+  ctx.lineTo(stickman.x, stickman.y + 20); // body
+  ctx.moveTo(stickman.x, stickman.y + 20);
+  ctx.lineTo(stickman.x - 10, stickman.y + 40); // left leg
+  ctx.moveTo(stickman.x, stickman.y + 20);
+  ctx.lineTo(stickman.x + 10, stickman.y + 40); // right leg
+  ctx.moveTo(stickman.x, stickman.y);
+  ctx.lineTo(stickman.x - 15, stickman.y - 10); // left arm
+  ctx.moveTo(stickman.x, stickman.y);
+  ctx.lineTo(stickman.x + 15, stickman.y - 10); // right arm
+  ctx.stroke();
+}
+
+function drawTargets() {
+  targets.forEach(t => {
+    ctx.beginPath();
+    ctx.arc(t.x, t.y, targetRadius, 0, Math.PI*2);
+    ctx.stroke();
+    ctx.fillText(t.label, t.x - 20, t.y + 5);
+  });
+}
+
+function drawGauges() {
+  ctx.fillText(`덕 게이지: ${virtue}%`, 20, 20);
+  ctx.fillText(`업보 게이지: ${karma}%`, 20, 40);
+}
+
+function moveTargets() {
+  targets.forEach(t => {
+    t.x += t.dx;
+    if (t.x - targetRadius < 0 || t.x + targetRadius > canvas.width) {
+      t.dx *= -1;
+    }
+  });
+}
+
+function checkClick(e) {
+  if (gameOver) return;
+  const rect = canvas.getBoundingClientRect();
+  const clickX = e.clientX - rect.left;
+  const clickY = e.clientY - rect.top;
+  let hit = false;
+  targets.forEach(t => {
+    const dist = Math.sqrt((clickX - t.x)**2 + (clickY - t.y)**2);
+    if (dist <= targetRadius) {
+      virtue += 25;
+      hit = true;
+    }
+  });
+  if (!hit) {
+    karma += 20;
+    misses += 1;
+  }
+  checkEnd();
+}
+
+function checkEnd() {
+  if (virtue >= 100) {
+    gameOver = true;
+    alert('🏹🪷 삼독이 소멸했습니다');
+  } else if (misses >= 3 || karma >= 60) {
+    gameOver = true;
+    alert('😈 삼독이 더욱 날뛰고 있습니다');
+  }
+}
+
+function gameLoop() {
+  ctx.clearRect(0,0,canvas.width,canvas.height);
+  drawStickman();
+  drawTargets();
+  drawGauges();
+  moveTargets();
+  if (!gameOver) requestAnimationFrame(gameLoop);
+}
+
+canvas.addEventListener('click', checkClick);
+ctx.font = '16px sans-serif';
+gameLoop();
+</script>
+</body>
+</html>
