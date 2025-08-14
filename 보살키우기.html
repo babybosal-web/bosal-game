@@ -1,0 +1,302 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>보살키우기 - 미니게임 프로토타입</title>
+<style>
+  :root{
+    --w: 1000px;
+    --h: 800px;
+    --goodInc: 25;   /* 덕 +25% */
+    --badInc: 20;    /* 업보 +20% */
+  }
+  *{box-sizing:border-box; font-family: ui-sans-serif, system-ui, -apple-system, "Apple SD Gothic Neo", "Noto Sans KR", Segoe UI, Roboto, "Helvetica Neue", Arial;}
+  body{display:flex; align-items:center; justify-content:center; background:#faf7f0; margin:0; padding:20px;}
+  .game{
+    width: min(var(--w), 95vw);
+    aspect-ratio: 5 / 4;
+    background: #fff;
+    border: 2px solid #222; border-radius: 16px;
+    box-shadow: 0 10px 30px rgba(0,0,0,.08);
+    position: relative; overflow:hidden;
+    display:grid; grid-template-rows: 96px 1fr 70px;
+  }
+  /* Top HUD */
+  .hud{display:grid; grid-template-columns: 1fr 1fr 160px; gap:12px; padding:14px 16px; border-bottom:1px dashed #ddd;}
+  .bar{
+    background:#f1f1f1; border:1px solid #ccc; border-radius: 10px; padding:8px 10px;
+  }
+  .bar .label{font-weight:700; font-size:14px; margin-bottom:6px; display:flex; justify-content:space-between;}
+  .track{height:14px; background:#eee; border-radius: 10px; overflow:hidden; border:1px solid #ddd;}
+  .fill{height:100%; width:0%; transition: width .35s ease;}
+  .fill.good{background:linear-gradient(90deg,#b7f3c7,#78e3a2);}
+  .fill.bad{background:linear-gradient(90deg,#ffc1c1,#ff7b7b);}
+  .counter{display:flex; align-items:center; justify-content:center; background:#f8f8f8; border:1px solid #ddd; border-radius:10px; font-weight:700;}
+  .counter span{font-size:14px;}
+  /* Main */
+  .stage{display:grid; grid-template-columns: 1fr 1.2fr 1fr; gap:10px; padding:16px;}
+  .items{display:grid; grid-template-columns: 1fr; gap:10px;}
+  .item{
+    border:1px solid #222; border-radius:12px; padding:10px;
+    background:#fff; cursor:pointer; position:relative;
+    display:flex; align-items:center; justify-content:center; min-height:72px; text-align:center;
+    transition: transform .08s ease, box-shadow .15s ease, background .2s ease;
+  }
+  .item:hover{transform: translateY(-2px); box-shadow:0 6px 18px rgba(0,0,0,.08)}
+  .item.used{opacity:.45; filter:grayscale(0.2); pointer-events:none;}
+  .item.bad.hint{outline:2px dashed #ff9d9d;}
+  .item.good.hint{outline:2px dashed #9de7b3;}
+  .center{
+    display:grid; grid-template-rows: auto 1fr; gap:8px; align-items:center; justify-items:center;
+    border-left:1px dashed #eee; border-right:1px dashed #eee; padding:10px;
+    position:relative;
+  }
+  .charWrap{position:relative; width:100%; height:100%; display:flex; align-items:center; justify-content:center;}
+  /* Stick-figure 보살 (SVG) */
+  svg{max-width: 260px; width:60%; height:auto; filter: drop-shadow(0 2px 0 rgba(0,0,0,.05));}
+  .aura{position:absolute; inset:0; display:none; align-items:center; justify-content:center; pointer-events:none;}
+  .aura.on{display:flex; animation: auraPulse 1.2s ease-in-out infinite;}
+  .lotus{position:absolute; bottom:18%; font-size:44px; opacity:0; transform: translateY(10px);}
+  .lotus.show{animation: floatUp 1.2s ease forwards;}
+  @keyframes auraPulse{
+    0%,100%{box-shadow: 0 0 0 0 rgba(255, 215, 0, .45), inset 0 0 0 0 rgba(255,215,0,.2);}
+    50%{box-shadow: 0 0 40px 8px rgba(255, 215, 0, .55), inset 0 0 24px 6px rgba(255,215,0,.25);}
+  }
+  @keyframes floatUp{
+    0%{opacity:0; transform: translateY(10px);}
+    100%{opacity:1; transform: translateY(-40px);}
+  }
+  .shake{animation: shake .25s ease;}
+  @keyframes shake{0%{transform:translateX(0)} 25%{transform:translateX(-3px)} 50%{transform:translateX(3px)} 75%{transform:translateX(-3px)} 100%{transform:translateX(0)}}
+  .toast{
+    position:absolute; top:14px; left:50%; transform:translateX(-50%);
+    background:#111; color:#fff; padding:8px 12px; border-radius:999px; font-size:14px; opacity:0; pointer-events:none;
+  }
+  .toast.show{animation: toast .9s ease;}
+  @keyframes toast{0%{opacity:0; transform:translate(-50%, -6px)} 15%{opacity:1; transform:translate(-50%, 0)} 85%{opacity:1} 100%{opacity:0; transform:translate(-50%, -6px)}}
+  .overlay{
+    position:absolute; inset:0; background:rgba(255,255,255,.85);
+    display:none; align-items:center; justify-content:center; flex-direction:column; gap:18px; text-align:center; padding:20px;
+  }
+  .overlay.show{display:flex;}
+  .overlay h2{margin:0; font-size:28px;}
+  .btns{display:flex; gap:10px; justify-content:center;}
+  button{
+    border:1px solid #222; background:#fff; border-radius:10px; padding:10px 14px; cursor:pointer; font-weight:700;
+  }
+  button:hover{background:#f8f8f8}
+  .legend{font-size:12px; color:#666; text-align:center;}
+</style>
+</head>
+<body>
+  <div class="game" id="game">
+    <!-- HUD -->
+    <div class="hud">
+      <div class="bar">
+        <div class="label"><span>덕 게이지</span><span id="goodLabel">0%</span></div>
+        <div class="track"><div class="fill good" id="goodFill"></div></div>
+      </div>
+      <div class="bar">
+        <div class="label"><span>업보 게이지</span><span id="badLabel">0%</span></div>
+        <div class="track"><div class="fill bad" id="badFill"></div></div>
+      </div>
+      <div class="counter"><span>오답 <b id="misses">0</b> / 3</span></div>
+    </div>
+
+    <!-- Stage -->
+    <div class="stage">
+      <!-- Left items -->
+      <div class="items" id="leftItems"></div>
+
+      <!-- Center character -->
+      <div class="center" id="center">
+        <div class="toast" id="toast">성공!</div>
+        <div class="charWrap" id="charWrap">
+          <div class="aura" id="aura"></div>
+          <!-- Stick figure SVG -->
+          <svg viewBox="0 0 120 200" aria-label="애기보살">
+            <!-- head -->
+            <circle cx="60" cy="36" r="18" fill="none" stroke="#222" stroke-width="4"/>
+            <!-- body -->
+            <line x1="60" y1="54" x2="60" y2="120" stroke="#222" stroke-width="4"/>
+            <!-- arms -->
+            <line x1="24" y1="78" x2="96" y2="78" stroke="#222" stroke-width="4"/>
+            <!-- legs -->
+            <line x1="60" y1="120" x2="36" y2="168" stroke="#222" stroke-width="4"/>
+            <line x1="60" y1="120" x2="84" y2="168" stroke="#222" stroke-width="4"/>
+            <!-- mini lotus base -->
+            <ellipse cx="60" cy="176" rx="34" ry="8" fill="#e9f8ee" stroke="#9adbb7" stroke-width="2"/>
+          </svg>
+          <div class="lotus" id="lotus">🌸</div>
+        </div>
+        <div class="legend">아이템을 골라 보시하세요. <b>보시템</b>이면 덕 +25%, <b>시비템</b>이면 업보 +20%</div>
+      </div>
+
+      <!-- Right items -->
+      <div class="items" id="rightItems"></div>
+    </div>
+
+    <!-- Footer -->
+    <div style="display:flex; gap:10px; align-items:center; justify-content:center; border-top:1px dashed #eee; padding:10px;">
+      <button id="resetBtn">다시하기</button>
+      <button id="hintBtn">힌트 보기</button>
+    </div>
+
+    <!-- Overlays -->
+    <div class="overlay" id="win">
+      <h2>보살이 되었습니다 ✨</h2>
+      <div>연꽃이 떠오릅니다 🌸</div>
+      <div class="btns"><button onclick="startGame()">다시하기</button></div>
+    </div>
+    <div class="overlay" id="lose">
+      <h2>보살이 도망가버렸습니다 🏃‍♀️</h2>
+      <div class="btns"><button onclick="startGame()">다시하기</button></div>
+    </div>
+  </div>
+
+<script>
+// -------- Data --------
+const GOOD_ITEMS = [
+  { name: "냄슈나 바디워시", type:"good" },
+  { name: "염주", type:"good" },
+  { name: "채식 도시락", type:"good" },
+  { name: "경전", type:"good" },
+];
+const BAD_ITEMS = [
+  { name: "고기꼬치", type:"bad" },
+  { name: "욕설 낙서", type:"bad" },
+  { name: "소주병", type:"bad" },
+  { name: "욕망의 항아리", type:"bad" },
+];
+
+// -------- State --------
+let good = 0, bad = 0, misses = 0;
+const goodFill = document.getElementById('goodFill');
+const badFill = document.getElementById('badFill');
+const goodLabel = document.getElementById('goodLabel');
+const badLabel = document.getElementById('badLabel');
+const missesEl = document.getElementById('misses');
+const leftEl = document.getElementById('leftItems');
+const rightEl = document.getElementById('rightItems');
+const center = document.getElementById('center');
+const aura = document.getElementById('aura');
+const lotus = document.getElementById('lotus');
+const win = document.getElementById('win');
+const lose = document.getElementById('lose');
+const toast = document.getElementById('toast');
+
+document.getElementById('resetBtn').addEventListener('click', startGame);
+document.getElementById('hintBtn').addEventListener('click', toggleHint);
+
+function shuffle(arr){
+  const a = arr.slice();
+  for (let i=a.length-1;i>0;i--){
+    const j = Math.floor(Math.random()*(i+1));
+    [a[i], a[j]] = [a[j], a[i]];
+  }
+  return a;
+}
+
+function updateBars(){
+  good = Math.max(0, Math.min(100, good));
+  bad  = Math.max(0, Math.min(100, bad));
+  goodFill.style.width = good + "%";
+  badFill.style.width  = bad + "%";
+  goodLabel.textContent = Math.round(good) + "%";
+  badLabel.textContent  = Math.round(bad) + "%";
+  missesEl.textContent = misses;
+}
+
+function showToast(msg){
+  toast.textContent = msg;
+  toast.classList.remove('show');
+  void toast.offsetWidth; // reflow
+  toast.classList.add('show');
+}
+
+function shake(){
+  center.classList.remove('shake');
+  void center.offsetWidth;
+  center.classList.add('shake');
+}
+
+function finish(winGame){
+  // disable all items
+  document.querySelectorAll('.item').forEach(el => el.classList.add('used'));
+  if (winGame){
+    aura.classList.add('on');
+    lotus.classList.add('show');
+    setTimeout(()=>{ win.classList.add('show'); }, 900);
+  } else {
+    lose.classList.add('show');
+  }
+}
+
+function onPick(el, item){
+  if (el.classList.contains('used')) return;
+  el.classList.add('used');
+  if (item.type === 'good'){
+    good += 25; // 보시템
+    showToast("덕 +25%");
+  } else {
+    bad += 20; // 시비템
+    misses += 1;
+    showToast("업보 +20%");
+    shake();
+  }
+  updateBars();
+
+  // check end conditions
+  if (good >= 100){
+    finish(true);
+    return;
+  }
+  if (misses >= 3 || bad >= 60){
+    finish(false);
+    return;
+  }
+}
+
+let hintOn = false;
+function toggleHint(){
+  hintOn = !hintOn;
+  document.querySelectorAll('.item').forEach(el=>el.classList.remove('hint'));
+  if (hintOn){
+    document.querySelectorAll('.item.good').forEach(el=>el.classList.add('hint'));
+  }
+}
+
+function createItemEl(item){
+  const el = document.createElement('div');
+  el.className = `item ${item.type}`;
+  el.textContent = item.name;
+  el.addEventListener('click', ()=> onPick(el, item));
+  return el;
+}
+
+function startGame(){
+  // reset state
+  good = 0; bad = 0; misses = 0; hintOn = false;
+  updateBars();
+  aura.classList.remove('on');
+  lotus.classList.remove('show');
+  win.classList.remove('show');
+  lose.classList.remove('show');
+
+  // compose 8 mixed items & split into L/R 4개씩
+  const mixed = shuffle(GOOD_ITEMS.concat(BAD_ITEMS));
+  const left  = mixed.slice(0,4);
+  const right = mixed.slice(4,8);
+
+  // render
+  leftEl.innerHTML = "";
+  rightEl.innerHTML = "";
+  left.forEach(i => leftEl.appendChild(createItemEl(i)));
+  right.forEach(i => rightEl.appendChild(createItemEl(i)));
+}
+
+startGame();
+</script>
+</body>
+</html>
